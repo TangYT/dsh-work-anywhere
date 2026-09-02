@@ -1,0 +1,3 @@
+# dsh-work-anywhere bundle patch：把插件行插入 profile roster。
+# 经 `dsh plugin --profile <name> add <git+https://gitee.com/tang-yongtao/dsh-work-anywhere.git>` 安装后由 loader 应用。
+- insert: [{ id: dsh-work-anywhere, name: 'dsh-work-anywhere' }]
