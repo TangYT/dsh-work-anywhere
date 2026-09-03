@@ -17,6 +17,7 @@ const API = {
   projects: '/api/dsh-remote-lab/workspaces',
   bindings: '/api/dsh-remote-lab/bindings',
   sessionBinding: '/api/dsh-remote-lab/session-binding',
+  gitConfig: '/api/dsh-remote-lab/git-config',
   // 微信 ClawBot 频道（由 dsh-wechat-channel 宿主半提供；未安装时路由 404）
   wcStatus: '/api/dsh-wechat-channel/status',
   wcLogin: '/api/dsh-wechat-channel/login',
@@ -311,6 +312,80 @@ function WechatControlCard() {
   )
 }
 
+// ---------- 网络与 Git（dwa_git / dwa_net_download 配置） ----------
+function GitNetCard(_props) {
+  const [cfg, setCfg] = React.useState(null)
+  const [token, setToken] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+  const [msg, setMsg] = React.useState('')
+
+  const load = React.useCallback(async () => {
+    try {
+      const d = await apiGet(API.gitConfig)
+      setCfg(d)
+      setMsg('')
+    } catch (e) {
+      setMsg('加载失败：' + String(e && e.message || e))
+    }
+  }, [])
+
+  React.useEffect(() => { load() }, [load])
+
+  const saveGit = async (patch) => {
+    setBusy(true)
+    try {
+      await apiSend('POST', API.gitConfig, { git: patch })
+      await load()
+    } catch (e) {
+      setMsg('保存失败：' + String(e && e.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const saveToken = async () => {
+    setBusy(true)
+    try {
+      await apiSend('POST', API.gitConfig, { hfToken: token })
+      setToken('')
+      await load()
+      setMsg('HF token 已保存')
+    } catch (e) {
+      setMsg('保存失败：' + String(e && e.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const toggle = (k) => (ev) => saveGit({ [k]: ev.target.checked })
+
+  const proxy = cfg && cfg.proxy
+  const git = (cfg && cfg.git) || { pushApproval: false, restrictPaths: false }
+  return React.createElement('div', { style: S.card },
+    React.createElement('div', { style: S.cardTitle }, '网络与 Git（dwa_git / dwa_net_download）'),
+    React.createElement('div', { style: S.hint },
+      'dwa_git 在 DSH 进程内直接执行 git（不受沙箱 schannel/命名管道限制，零审批）；dwa_net_download 流式下载 GitHub/HuggingFace 大文件（直连 → 代理 → hf-mirror 回退）。'),
+    React.createElement('div', { style: S.row },
+      React.createElement('div', { style: S.field },
+        React.createElement('label', { style: S.label }, '代理状态'),
+        React.createElement('span', { style: S.mono }, proxy ? ('已发现并缓存: ' + proxy) : '未发现（直连优先，失败时自动扫描本机代理）')),
+      React.createElement('div', { style: S.field },
+        React.createElement('label', { style: S.label }, 'git 审计日志'),
+        React.createElement('span', { style: S.mono }, (cfg && cfg.auditPath) || '-'))),
+    React.createElement('div', { style: S.row },
+      React.createElement('label', { style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--dsw-alias-label-primary)' } },
+        React.createElement('input', { type: 'checkbox', checked: git.pushApproval, disabled: busy, onChange: toggle('pushApproval') }),
+        'push 需审批（经 Web/微信批准后放行）'),
+      React.createElement('label', { style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--dsw-alias-label-primary)' } },
+        React.createElement('input', { type: 'checkbox', checked: git.restrictPaths, disabled: busy, onChange: toggle('restrictPaths') }),
+        '路径限制（git 与下载仅限已注册项目目录内）')),
+    React.createElement('div', { style: S.row },
+      React.createElement('div', { style: S.field },
+        React.createElement('label', { style: S.label }, 'HuggingFace token（私有/受限模型，可选）'),
+        React.createElement('input', { type: 'password', style: S.input, value: token, disabled: busy, onChange: (ev) => setToken(ev.target.value), placeholder: (cfg && cfg.hfTokenSet) ? '已设置（输入新值可覆盖）' : 'hf_...' })),
+      React.createElement('button', { style: S.btn, disabled: busy || !token, onClick: saveToken }, '保存 token')),
+    msg ? React.createElement('div', { style: S.msg }, msg) : null,
+  )
+}
+
 // ---------- 设置页（远程控制：微信通道 + 项目绑定总览） ----------
 function RemoteLabPage(_props) {
   const [hosts, setHosts] = React.useState([])
@@ -382,6 +457,7 @@ function RemoteLabPage(_props) {
     React.createElement('div', { style: S.hint },
       '「远程控制」= 微信/飞书驱动 dsh + 项目远程工作区。对话标题栏的「远程实验」按钮可快捷配置当前项目绑定；微信连接与整个 dsh web 绑定（不按项目/对话）。'),
     React.createElement(WechatControlCard, null),
+    React.createElement(GitNetCard, null),
     React.createElement('div', { style: S.card },
       React.createElement('div', { style: S.cardTitle }, '项目绑定 / 换绑'),
       React.createElement('div', { style: S.row },

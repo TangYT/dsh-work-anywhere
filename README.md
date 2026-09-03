@@ -16,6 +16,15 @@ DeepSeek Harness 标准插件：**远程实验工作区 + 微信 ClawBot 远程�
 - **入口**：Agent 工具 `dwa_net_fetch`（GET/POST 任意 http/https URL，上限 256KB，全会话可用、无需提升沙箱权限）；插件的飞书/企微 webhook 通知同样走该策略；
 - 依赖 `undici`（HTTP CONNECT / SOCKS 代理，纯 JS）；微信 iLink 与交互桥保持回环直连。
 
+## 本地 Git 与 GitHub / HuggingFace 下载（零审批，全会话）
+
+DSH 沙箱（Windows ACL 受限 token）会让 shell 里的 git/curl 因「命名管道禁用 + schannel 无凭据」失败。插件因此在 **DSH 进程内**直接提供两条通道（不经 `ctx.sandbox.confine`，普通用户 token，实测 GitHub 浅克隆 exit=0、HF 文件经代理 200）：
+
+- **`dwa_git`** —— git 全操作：`clone/init/add/commit/push/pull/fetch/merge/rebase/checkout/branch/tag/remote/stash/submodule/lfs/ls-remote/config…` 白名单；无 shell（argv 直传 git.exe，拒绝 `; | & < >` 等元字符与 `--upload-pack/--receive-pack/-c core.sshCommand` 危险项）；LFS 大文件默认跳过（`GIT_LFS_SKIP_SMUDGE=1`，用 `dwa_net_download` 补）；网络类失败自动注入 `-c http.proxy=<已发现代理>` 重试一次；每次执行写审计日志 `$DSH_HOME/work-anywhere/git-audit.jsonl`。
+- **`dwa_net_download`** —— 大文件流式下载（GitHub release/codeload/raw、HuggingFace 模型文件）：直连 → 代理 → `huggingface.co` 自动回退 `hf-mirror.com`；`.part` 临时文件 → 完成改名；大小上限（默认 10GB）、sha256 校验、Authorization 头透传（HF token 自动附加）；代理尝试仅限连接超时，长连接不被 `proxyAttemptMs` 掐断。
+- **额外安全策略（可选，默认关 = 自由使用）**：设置页「远程控制 → 网络与 Git」可开启 **push 需审批**（走 DSH 审批流，微信可远程批准）与 **路径限制**（git 与下载仅限已注册项目目录内）；也可配置 HuggingFace token。
+- 相关配置：`$DSH_HOME/work-anywhere/config.json`；审计：`$DSH_HOME/work-anywhere/git-audit.jsonl`。
+
 ## 安装
 
 ```bash
@@ -71,12 +80,13 @@ dsh plugin --profile web add "link:E:\dsh-work-anywhere\dsh-work-anywhere"
 - SSH 主机：`$DSH_HOME/dsh-ssh.json`（dsh-ssh 插件配置，支持 key/password 认证）
 - 项目绑定：项目根目录 `.dsh-remote.json`（alias/remoteRoot/webhook/sudoPassword/pullPatterns）
 - 微信状态：`$DSH_HOME/wechat-channel/state.json`
+- Git/网络：`$DSH_HOME/work-anywhere/config.json`（pushApproval/restrictPaths/hfToken）
 
 ## 开发
 
 ```bash
 npm install
-npm test        # 三套离线测试：remote-lab 冒烟 / wechat 冒烟 / 全链路桥接
+npm test        # 离线测试：remote-lab 冒烟 / wechat 冒烟 / 全链路桥接 / 网络层 / 本地 git 执行器 / 大文件下载器
 npm run build   # 构建浏览器半 → lib/client.js
 ```
 
