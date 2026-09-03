@@ -16,10 +16,25 @@ const respondCalls = []
 function resp(json) {
   return { ok: true, status: 200, text: async () => JSON.stringify(json) }
 }
-// 交互桥的假 mux SSE：可随时 push 帧（审批/问答/已解决）
-let muxController = null
-const muxStream = new ReadableStream({ start(controller) { muxController = controller } })
-const pushMuxFrame = (f) => { if (muxController) muxController.enqueue(new TextEncoder().encode('data: ' + JSON.stringify(f) + '\n\n')) }
+// 交互桥的假 WebSocket（/api/events.mux 下行通道：每帧 {rpcId, method, payload} 的 JSON 文本）
+const fakeSockets = []
+class FakeWS {
+  constructor(url) {
+    this.url = String(url)
+    this.onopen = null; this.onmessage = null; this.onerror = null; this.onclose = null
+    this.closed = false
+    fakeSockets.push(this)
+    queueMicrotask(() => { if (!this.closed && this.onopen) this.onopen() })
+  }
+  close() { if (!this.closed) { this.closed = true; if (this.onclose) this.onclose() } }
+  _deliver(frame) {
+    if (this.closed || !this.onmessage) return
+    const { type, ...payload } = frame.payload
+    this.onmessage({ data: JSON.stringify({ rpcId: frame.rpcId, method: type, payload }) })
+  }
+}
+globalThis.WebSocket = FakeWS
+const pushMuxFrame = (f) => { for (const ws of fakeSockets) ws._deliver(f) }
 globalThis.fetch = async (url, opts = {}) => {
   // 宏任务让步：防止全微任务链饿死事件循环（真实网络天然有延迟）
   await new Promise((r) => setTimeout(r, 5))
@@ -34,7 +49,6 @@ globalThis.fetch = async (url, opts = {}) => {
   if (u.includes('getupdates')) {
     return resp({ ret: 0, msgs: inbound.splice(0), get_updates_buf: 'BUF' + Date.now() })
   }
-  if (u.includes('events.mux')) return { ok: true, status: 200, body: muxStream }
   if (u.includes('/api/respond')) {
     respondCalls.push(body)
     return { ok: true, status: 200, json: async () => ({ accepted: true }) }
