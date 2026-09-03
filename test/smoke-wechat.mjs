@@ -155,3 +155,4 @@ for (const d of disposers) { try { d() } catch (e) { console.log('disposer warn:
 console.log('  ok 卸载清理执行完毕')
 
 console.log('SMOKE OK')
+process.exit(0)

@@ -12,9 +12,14 @@ process.env.DSH_WECHAT_STATE_DIR = stateDir
 // ---------- iLink API stub ----------
 const inbound = []
 const outbound = []
+const respondCalls = []
 function resp(json) {
   return { ok: true, status: 200, text: async () => JSON.stringify(json) }
 }
+// 交互桥的假 mux SSE：可随时 push 帧（审批/问答/已解决）
+let muxController = null
+const muxStream = new ReadableStream({ start(controller) { muxController = controller } })
+const pushMuxFrame = (f) => { if (muxController) muxController.enqueue(new TextEncoder().encode('data: ' + JSON.stringify(f) + '\n\n')) }
 globalThis.fetch = async (url, opts = {}) => {
   // 宏任务让步：防止全微任务链饿死事件循环（真实网络天然有延迟）
   await new Promise((r) => setTimeout(r, 5))
@@ -28,6 +33,11 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   if (u.includes('getupdates')) {
     return resp({ ret: 0, msgs: inbound.splice(0), get_updates_buf: 'BUF' + Date.now() })
+  }
+  if (u.includes('events.mux')) return { ok: true, status: 200, body: muxStream }
+  if (u.includes('/api/respond')) {
+    respondCalls.push(body)
+    return { ok: true, status: 200, json: async () => ({ accepted: true }) }
   }
   throw new Error('unexpected fetch url: ' + u)
 }
@@ -100,7 +110,7 @@ const fakeCtx = {
     }
     return undefined
   },
-  webServer: { register() { return () => {} } },
+  webServer: { register() { return () => {} }, port: 32123, host: '127.0.0.1' },
   agents: {
     async create(opts) {
       createdAgents.push(opts)
@@ -362,6 +372,105 @@ console.log('ok context_token 回显（' + last.context_token + '）')
   const st = outbound.map((m) => m.item_list[0].text_item.text).join('\n')
   if (!st.includes('会话: t1 测试会话') || !st.includes('session-')) throw new Error('/status 应同时包含标题与会话 id 前缀')
   console.log('ok /status → 显示会话标题（t1 测试会话 + id 前缀）')
+}
+
+// 8. 交互桥：审批帧 → 微信转发 → 「允许」→ POST /api/respond(allowed-once)（Web answerer 路径）
+{
+  pushMuxFrame({ rpcId: 'rpc-ap-1', payload: { type: 'approval/requested', sessionId: 'session-t1', approvalId: 'ap-1', toolName: 'write', reason: '写入文件需要审批' } })
+  await waitFor(() => outbound.some((m) => m.item_list[0].text_item.text.includes('审批请求') && m.item_list[0].text_item.text.includes('write')), '审批转发微信')
+  pushMsg('允许', 'CTXA1')
+  await waitFor(() => respondCalls.some((c) => c.rpcId === 'rpc-ap-1'), '审批答复递交')
+  const c = respondCalls.find((x) => x.rpcId === 'rpc-ap-1')
+  if (!c.result.ok || c.result.value.outcome !== 'allowed-once' || c.result.value.approvalId !== 'ap-1' || c.result.value.sessionId !== 'session-t1') throw new Error('审批放行载荷不符: ' + JSON.stringify(c))
+  console.log('ok 交互桥：审批 → 微信「允许」 → respond(allowed-once)')
+}
+// 9. 审批拒绝（白名单放行：其他回复一律拒绝）
+{
+  const apCount = () => outbound.filter((m) => m.item_list[0].text_item.text.includes('审批请求')).length
+  const before = apCount()
+  pushMuxFrame({ rpcId: 'rpc-ap-2', payload: { type: 'approval/requested', sessionId: 'session-t1', approvalId: 'ap-2', toolName: 'write' } })
+  await waitFor(() => apCount() >= before + 1, '审批2转发')
+  pushMsg('不用了', 'CTXA2')
+  await waitFor(() => respondCalls.some((c) => c.rpcId === 'rpc-ap-2'), '审批2递交')
+  const c = respondCalls.find((x) => x.rpcId === 'rpc-ap-2')
+  if (c.result.value.outcome !== 'rejected') throw new Error('拒绝载荷不符: ' + JSON.stringify(c))
+  console.log('ok 交互桥：审批 → 微信「不用了」 → rejected（失败关闭）')
+}
+// 10. 选项问答：编号回复
+{
+  pushMuxFrame({ rpcId: 'rpc-q-1', payload: { type: 'question/requested', sessionId: 'session-t1', questions: [{ id: 'q1', question: '选择哪台服务器？', options: [{ label: 'A800' }, { label: 'robot' }] }] } })
+  await waitFor(() => outbound.some((m) => m.item_list[0].text_item.text.includes('选择哪台服务器')), '问答转发')
+  pushMsg('2', 'CTXQ1')
+  await waitFor(() => respondCalls.some((c) => c.rpcId === 'rpc-q-1'), '问答递交')
+  const c = respondCalls.find((x) => x.rpcId === 'rpc-q-1')
+  const ans = c.result.value.answer.answers[0]
+  if (ans.id !== 'q1' || ans.selected.length !== 1 || ans.selected[0] !== 'robot') throw new Error('编号答案不符: ' + JSON.stringify(c))
+  console.log('ok 交互桥：问答编号「2」 → selected=[robot]')
+}
+// 11. 选项问答：自由文本
+{
+  pushMuxFrame({ rpcId: 'rpc-q-2', payload: { type: 'question/requested', sessionId: 'session-t1', questions: [{ id: 'q2', question: '有什么备注？' }] } })
+  await waitFor(() => outbound.some((m) => m.item_list[0].text_item.text.includes('有什么备注')), '问答2转发')
+  pushMsg('这是我的备注', 'CTXQ2')
+  await waitFor(() => respondCalls.some((c) => c.rpcId === 'rpc-q-2'), '问答2递交')
+  const c = respondCalls.find((x) => x.rpcId === 'rpc-q-2')
+  const ans = c.result.value.answer.answers[0]
+  if (ans.selected.length !== 0 || ans.custom !== '这是我的备注') throw new Error('自定义答案不符: ' + JSON.stringify(c))
+  console.log('ok 交互桥：自由文本 → custom')
+}
+// 12. 计划评审：批准 / 继续打磨（intent kind=plan-review，计划全文分条转发）
+{
+  pushMuxFrame({ rpcId: 'rpc-p-1', payload: { type: 'question/requested', sessionId: 'session-t1', questions: [{ id: 'plan-review', header: 'Plan review', question: 'Approve this plan and leave plan mode?', detail: '# 计划标题\n\n计划正文内容……', options: [{ label: 'Approve plan and leave plan mode' }, { label: 'Keep planning' }], intent: { kind: 'plan-review', approve: 'Approve plan and leave plan mode' } }] } })
+  await waitFor(() => outbound.some((m) => m.item_list[0].text_item.text.includes('计划正文内容')), '计划全文转发')
+  pushMsg('批准', 'CTXP1')
+  await waitFor(() => respondCalls.some((c) => c.rpcId === 'rpc-p-1'), '计划批准递交')
+  const c = respondCalls.find((x) => x.rpcId === 'rpc-p-1')
+  const ans = c.result.value.answer.answers[0]
+  if (ans.selected.length !== 1 || ans.selected[0] !== 'Approve plan and leave plan mode') throw new Error('批准答案不符: ' + JSON.stringify(c))
+  console.log('ok 交互桥：计划评审「批准」 → selected=[approve]')
+}
+{
+  pushMuxFrame({ rpcId: 'rpc-p-2', payload: { type: 'question/requested', sessionId: 'session-t1', questions: [{ id: 'plan-review', question: 'Approve?', detail: '# 计划二', options: [{ label: 'Approve plan and leave plan mode' }, { label: 'Keep planning' }], intent: { kind: 'plan-review', approve: 'Approve plan and leave plan mode' } }] } })
+  await waitFor(() => outbound.some((m) => m.item_list[0].text_item.text.includes('# 计划二')), '计划2转发')
+  pushMsg('改一下时间安排', 'CTXP2')
+  await waitFor(() => respondCalls.some((c) => c.rpcId === 'rpc-p-2'), '计划2递交')
+  const c = respondCalls.find((x) => x.rpcId === 'rpc-p-2')
+  const ans = c.result.value.answer.answers[0]
+  if (ans.selected.length !== 0 || ans.custom !== '改一下时间安排') throw new Error('继续打磨答案不符: ' + JSON.stringify(c))
+  console.log('ok 交互桥：计划评审「改一下时间安排」 → selected=[] + custom 反馈')
+}
+// 13. 等待期：该对端的消息只交付等待器，绝不进入 Agent
+{
+  const t1Agent = liveAgents.get('session-t1')
+  const before = t1Agent.followups.length
+  pushMuxFrame({ rpcId: 'rpc-q-3', payload: { type: 'question/requested', sessionId: 'session-t1', questions: [{ id: 'q3', question: '等待期问题？' }] } })
+  await waitFor(() => outbound.some((m) => m.item_list[0].text_item.text.includes('等待期问题')), '等待期转发')
+  pushMsg('直接回复的内容', 'CTXQ3')
+  await waitFor(() => respondCalls.some((c) => c.rpcId === 'rpc-q-3'), '等待期递交')
+  if (t1Agent.followups.length !== before) throw new Error('等待期消息不应进入 Agent')
+  console.log('ok 交互桥：等待期回复只交付等待器，不进入 Agent')
+}
+// 14. 多问题批次：逐个问答，最后一次性递交全部答案
+{
+  pushMuxFrame({ rpcId: 'rpc-q-4', payload: { type: 'question/requested', sessionId: 'session-t1', questions: [{ id: 'm1', question: '第一问？', options: [{ label: '甲' }, { label: '乙' }] }, { id: 'm2', question: '第二问？', options: [{ label: '丙' }, { label: '丁' }] }] } })
+  await waitFor(() => outbound.some((m) => m.item_list[0].text_item.text.includes('第一问')), '多问第一问转发')
+  pushMsg('1', 'CTXM1')
+  await waitFor(() => outbound.some((m) => m.item_list[0].text_item.text.includes('第二问')), '多问第二问转发')
+  pushMsg('2', 'CTXM2')
+  await waitFor(() => respondCalls.some((c) => c.rpcId === 'rpc-q-4'), '多问递交')
+  const c = respondCalls.find((x) => x.rpcId === 'rpc-q-4')
+  const answers = c.result.value.answer.answers
+  if (answers.length !== 2 || answers[0].selected[0] !== '甲' || answers[1].selected[0] !== '丁') throw new Error('多问答案不符: ' + JSON.stringify(c))
+  console.log('ok 交互桥：多问题批次逐个问答，一次性递交全部答案')
+}
+// 15. 非微信会话的帧忽略（Web 端照常处理）
+{
+  const before = respondCalls.length
+  pushMuxFrame({ rpcId: 'rpc-other', payload: { type: 'approval/requested', sessionId: 'session-unknown-xyz', approvalId: 'ap-x', toolName: 'write' } })
+  await sleep(300)
+  if (respondCalls.length !== before) throw new Error('非微信会话的帧不应被答复')
+  if (outbound.some((m) => m.item_list[0].text_item.text.includes('审批请求') && m.item_list[0].text_item.text.includes('ap-x'))) throw new Error('非微信会话帧不应转发')
+  console.log('ok 交互桥：非微信会话帧忽略')
 }
 
 // 7. 卸载清理（触发内部 disposer 停监控）
