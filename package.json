@@ -1,6 +1,6 @@
 {
   "name": "dsh-work-anywhere",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DeepSeek Harness 标准插件：远程实验工作区（项目 ↔ 服务器绑定、回调驱动实验计划、SSH 执行/同步）+ 微信 ClawBot 远程控制（iLink 协议、消息驱动 Agent、项目/会话切换、已归档会话门控）",
   "type": "module",
   "main": "lib/index.js",
@@ -29,14 +29,15 @@
   },
   "dependencies": {
     "qrcode": "^1.5.4",
-    "ssh2": "^1.17.0"
+    "ssh2": "^1.17.0",
+    "undici": "^8.10.1"
   },
   "devDependencies": {
     "esbuild": "^0.25.12"
   },
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test/smoke-remote-lab.mjs && node test/smoke-wechat.mjs && node test/bridge.mjs"
+    "test": "node test/smoke-remote-lab.mjs && node test/smoke-wechat.mjs && node test/bridge.mjs && node test/smoke-net.mjs"
   },
   "license": "MIT",
   "files": [

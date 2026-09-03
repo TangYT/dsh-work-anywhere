@@ -4,8 +4,17 @@ DeepSeek Harness 标准插件：**远程实验工作区 + 微信 ClawBot 远程�
 
 | 子模块 | 功能 |
 | --- | --- |
-| `remote-lab` | 项目 ↔ 远程服务器绑定（`.dsh-remote.json`）、回调驱动实验计划（零轮询）、SSH 执行/文件同步、每会话一次性「远程服务器速查」注入 |
-| `wechat-channel` | 微信 ClawBot（腾讯 iLink 协议）扫码绑定整个 dsh web、微信消息驱动 Agent、项目/会话查询切换、已归档会话门控 |
+| `remote-lab` | 项目 ↔ 远程服务器绑定（`.dsh-remote.json`）、回调驱动实验计划（零轮询）、SSH 执行/文件同步、每会话一次性「远程服务器速查」注入、**全局网络权限层** |
+| `wechat-channel` | 微信 ClawBot（腾讯 iLink 协议）扫码绑定整个 dsh web、微信消息驱动 Agent、项目/会话查询切换、已归档会话门控、微信交互桥 |
+
+## 网络权限层（全局，对所有会话与所有 Agent 调用生效）
+
+在 Workspace Write 文件权限之上放行网络访问：
+
+- **直连优先**：所有出站请求先尝试直连；
+- **自动代理回退**：直连失败时自动扫描本机可用代理——环境变量（`ALL_PROXY`/`HTTPS_PROXY`/`HTTP_PROXY`）→ Windows 系统代理（HKCU Internet Settings）→ 常见 Clash/代理端口（7890/7897/7891/7892/7898/7899/10808/10809/8888/8080、SOCKS5 1080），并行竞速、先通先用；命中代理缓存 10 分钟，过期/失效自动重扫；
+- **入口**：Agent 工具 `dwa_net_fetch`（GET/POST 任意 http/https URL，上限 256KB，全会话可用、无需提升沙箱权限）；插件的飞书/企微 webhook 通知同样走该策略；
+- 依赖 `undici`（HTTP CONNECT / SOCKS 代理，纯 JS）；微信 iLink 与交互桥保持回环直连。
 
 ## 安装
 
