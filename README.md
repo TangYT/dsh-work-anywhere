@@ -34,6 +34,7 @@
 | `remote-lab` | 项目 ↔ 远程服务器绑定；SSH 执行 / 文件同步；回调驱动实验计划；断线续跑；产物自动下载；飞书 / 企微 webhook 通知 | GPU 训练、长任务评测、批量实验 |
 | `wechat-channel` | 微信扫码接管整个 dsh web；消息驱动 Agent；项目 / 会话切换；微信交互桥（审批、问答、计划评审可微信回复） | 通勤 / 出差时远程推进开发 |
 | `local-git` + `download` | 进程内 git 全操作（HTTPS/SSH/LFS）；GitHub / HuggingFace 大文件流式下载；通用网络抓取 | AI 开发依赖 GitHub / HuggingFace 时的免审批通路 |
+| `arxiv` | `dwa_arxiv_read`：链接或编号 → HTML 版论文全文纯文本（公式保留 LaTeX），秒级返回；无 HTML 的老论文自动给 PDF 下载建议 | 文献调研、读论文 |
 | 网络权限层 | 直连优先，失败自动扫描本机代理回退 | 本机网络受限（需代理）的环境 |
 
 ## 安装
@@ -82,6 +83,7 @@ dsh plugin --profile web add "git+https://gitee.com/tang-yongtao/dsh-work-anywhe
 ### ③ 其他自动生效的能力（无需任何操作）
 
 - **本地 Git 与下载**：Agent 需要 clone / 提交 / 推送、下载 GitHub release 或 HuggingFace 模型时，自动走插件内置通道，不再弹沙箱审批。如需额外管控（push 需审批、路径限制、HF token），在设置 →「远程控制」→「网络与 Git」里按需开启；
+- **arXiv 论文阅读**：Agent 拿到 arXiv 链接或编号会直接用 `dwa_arxiv_read` 读取 HTML 版全文（比 PDF 快得多、且是纯文本），无需任何操作；
 - **网络代理**：直连失败自动切换本机代理，无需手动配置。
 
 ## 配置
