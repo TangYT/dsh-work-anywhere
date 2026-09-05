@@ -37,7 +37,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test/smoke-remote-lab.mjs && node test/smoke-wechat.mjs && node test/bridge.mjs && node test/smoke-net.mjs && node test/local-git.test.mjs && node test/download.test.mjs && node test/net-download.test.mjs"
+    "test": "node test/smoke-remote-lab.mjs && node test/smoke-wechat.mjs && node test/bridge.mjs && node test/smoke-net.mjs && node test/local-git.test.mjs && node test/download.test.mjs && node test/net-download.test.mjs && node test/wechat-failure.test.mjs"
   },
   "license": "MIT",
   "files": [
